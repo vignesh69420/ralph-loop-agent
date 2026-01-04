@@ -12,6 +12,7 @@ import type {
 import type { ProviderOptions, SystemModelMessage } from '@ai-sdk/provider-utils';
 import type { VerifyCompletionFunction } from './ralph-loop-agent-evaluator';
 import type { RalphStopCondition } from './ralph-stop-condition';
+import type { RalphContextConfig, RalphContextManager } from './ralph-context-manager';
 
 /**
  * Callback invoked at the start of each iteration.
@@ -151,4 +152,33 @@ export type RalphLoopAgentSettings<TOOLS extends ToolSet = {}> = Omit<
    * Context passed into tool calls.
    */
   experimental_context?: unknown;
+
+  /**
+   * Configuration for context management (handles long conversations).
+   * 
+   * When enabled, the agent will:
+   * - Track file reads/writes to maintain relevant context
+   * - Auto-summarize older iterations to stay within token limits
+   * - Maintain a change log of decisions and actions
+   * - Handle large files by chunking with line numbers
+   * 
+   * @example
+   * ```ts
+   * contextManagement: {
+   *   maxContextTokens: 150_000,  // Leave room for output
+   *   enableSummarization: true,
+   *   recentIterationsToKeep: 2,
+   * }
+   * ```
+   */
+  contextManagement?: RalphContextConfig;
+
+  /**
+   * Callback when context is being summarized due to token limits.
+   */
+  onContextSummarized?: (event: {
+    readonly iteration: number;
+    readonly summarizedIterations: number;
+    readonly tokensSaved: number;
+  }) => void | Promise<void>;
 };

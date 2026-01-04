@@ -35,3 +35,17 @@ export type {
   VerifyCompletionContext,
   VerifyCompletionResult,
 } from './ralph-loop-agent-evaluator';
+
+// Context management exports
+export {
+  RalphContextManager,
+  estimateTokens,
+  estimateMessageTokens,
+  createContextAwareTools,
+} from './ralph-context-manager';
+export type {
+  RalphContextConfig,
+  TrackedFile,
+  ChangeLogEntry,
+  IterationSummary,
+} from './ralph-context-manager';

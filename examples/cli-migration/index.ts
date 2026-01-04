@@ -34,6 +34,10 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+// Constants for context management
+const MAX_FILE_CHARS = 30_000;
+const MAX_FILE_LINES_PREVIEW = 400;
+
 // ANSI color codes
 const colors = {
   reset: '\x1b[0m',
@@ -131,16 +135,56 @@ const tools = {
   }),
 
   readFile: tool({
-    description: 'Read the contents of a file',
+    description: 'Read the contents of a file. For large files, use lineStart/lineEnd to read specific sections.',
     inputSchema: z.object({
       filePath: z.string().describe('Path to the file relative to the project root'),
+      lineStart: z.number().optional().describe('Start line (1-indexed). Use for large files.'),
+      lineEnd: z.number().optional().describe('End line (inclusive). Use for large files.'),
     }),
-    execute: async ({ filePath }) => {
+    execute: async ({ filePath, lineStart, lineEnd }) => {
       try {
         const fullPath = path.join(resolvedDir, filePath);
         const content = await fs.readFile(fullPath, 'utf-8');
+        const lines = content.split('\n');
+        const totalLines = lines.length;
+        
+        // If specific range requested, extract it
+        if (lineStart !== undefined || lineEnd !== undefined) {
+          const start = Math.max(1, lineStart ?? 1);
+          const end = Math.min(totalLines, lineEnd ?? totalLines);
+          const selectedLines = lines.slice(start - 1, end);
+          const numberedContent = selectedLines
+            .map((line, i) => `${String(start + i).padStart(6)}| ${line}`)
+            .join('\n');
+          log(`  📖 Read: ${filePath} lines ${start}-${end} of ${totalLines}`, 'dim');
+          return { 
+            success: true, 
+            content: numberedContent,
+            totalLines,
+            lineRange: { start, end },
+          };
+        }
+        
+        // Auto-truncate large files
+        if (content.length > MAX_FILE_CHARS) {
+          const maxLines = Math.min(MAX_FILE_LINES_PREVIEW, totalLines);
+          const selectedLines = lines.slice(0, maxLines);
+          const numberedContent = selectedLines
+            .map((line, i) => `${String(i + 1).padStart(6)}| ${line}`)
+            .join('\n');
+          const warning = `\n\n... [TRUNCATED: File has ${totalLines} lines, showing 1-${maxLines}. Use lineStart/lineEnd to read specific sections] ...`;
+          log(`  📖 Read: ${filePath} (TRUNCATED: ${totalLines} lines, showing 1-${maxLines})`, 'yellow');
+          return { 
+            success: true, 
+            content: numberedContent + warning,
+            totalLines,
+            truncated: true,
+            lineRange: { start: 1, end: maxLines },
+          };
+        }
+        
         log(`  📖 Read: ${filePath} (${content.length} chars)`, 'dim');
-        return { success: true, content };
+        return { success: true, content, totalLines };
       } catch (error) {
         return { success: false, error: String(error) };
       }
@@ -148,7 +192,7 @@ const tools = {
   }),
 
   writeFile: tool({
-    description: 'Write content to a file (creates directories if needed)',
+    description: 'Write content to a file (creates directories if needed). For small changes, prefer editFile instead.',
     inputSchema: z.object({
       filePath: z.string().describe('Path to the file relative to the project root'),
       content: z.string().describe('The content to write to the file'),
@@ -160,6 +204,50 @@ const tools = {
         await fs.writeFile(fullPath, content, 'utf-8');
         log(`  ✏️  Wrote: ${filePath}`, 'green');
         return { success: true, filePath };
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    },
+  }),
+
+  editFile: tool({
+    description: 'Make surgical edits to a file by replacing specific text. More token-efficient than writeFile for small changes. The old_string must be unique in the file.',
+    inputSchema: z.object({
+      filePath: z.string().describe('Path to the file relative to the project root'),
+      old_string: z.string().describe('Exact text to find and replace (must be unique in the file)'),
+      new_string: z.string().describe('Text to replace it with'),
+    }),
+    execute: async ({ filePath, old_string, new_string }) => {
+      try {
+        const fullPath = path.join(resolvedDir, filePath);
+        const content = await fs.readFile(fullPath, 'utf-8');
+        
+        // Check for exact match
+        const occurrences = content.split(old_string).length - 1;
+        if (occurrences === 0) {
+          return { 
+            success: false, 
+            error: 'old_string not found in file. Make sure it matches exactly (including whitespace).',
+          };
+        }
+        if (occurrences > 1) {
+          return { 
+            success: false, 
+            error: `old_string found ${occurrences} times - must be unique. Add more surrounding context to make it unique.`,
+          };
+        }
+        
+        // Perform replacement
+        const newContent = content.replace(old_string, new_string);
+        await fs.writeFile(fullPath, newContent, 'utf-8');
+        
+        log(`  🔧 Edited: ${filePath}`, 'green');
+        return { 
+          success: true, 
+          filePath,
+          replaced: old_string.length > 100 ? old_string.slice(0, 100) + '...' : old_string,
+          with: new_string.length > 100 ? new_string.slice(0, 100) + '...' : new_string,
+        };
       } catch (error) {
         return { success: false, error: String(error) };
       }
@@ -278,6 +366,9 @@ Then use that exact version in package.json. NEVER guess or use outdated version
 
 ## Important:
 - Always read a file before modifying it
+- For SMALL CHANGES (fixing imports, renaming, type errors), use editFile instead of writeFile
+- editFile is more token-efficient and prevents full file rewrites
+- For LARGE FILES, use lineStart/lineEnd in readFile to read specific sections
 - Make sure to update package.json dependencies as needed
 - Create any necessary config files (like vitest.config.ts)
 - Run "npm install" or equivalent after modifying package.json
@@ -287,6 +378,16 @@ Then use that exact version in package.json. NEVER guess or use outdated version
 Current working directory: ${resolvedDir}`,
 
     tools,
+
+    // Enable context management to handle long conversations
+    contextManagement: {
+      maxContextTokens: 180_000,      // Claude's 200k limit minus output buffer
+      enableSummarization: true,       // Summarize old iterations
+      recentIterationsToKeep: 2,       // Keep last 2 iterations in full detail
+      maxFileChars: MAX_FILE_CHARS,    // Truncate files larger than this
+      changeLogBudget: 8_000,          // Tokens for tracking decisions
+      fileContextBudget: 60_000,       // Tokens for file content
+    },
 
     stopWhen: iterationCountIs(15),
 
@@ -325,6 +426,10 @@ Current working directory: ${resolvedDir}`,
 
     onIterationEnd: ({ iteration, duration }: { iteration: number; duration: number }) => {
       log(`  ⏱️  Duration: ${duration}ms`, 'dim');
+    },
+
+    onContextSummarized: ({ iteration, summarizedIterations, tokensSaved }: { iteration: number; summarizedIterations: number; tokensSaved: number }) => {
+      log(`  📝 Context summarized: ${summarizedIterations} iterations compressed, ${tokensSaved} tokens available`, 'yellow');
     },
   });
 

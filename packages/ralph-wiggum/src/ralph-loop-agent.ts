@@ -19,6 +19,10 @@ import {
   type RalphStopCondition,
   type RalphStopConditionContext,
 } from './ralph-stop-condition';
+import {
+  RalphContextManager,
+  estimateMessageTokens,
+} from './ralph-context-manager';
 
 /**
  * Parameters for calling a RalphLoopAgent.
@@ -102,9 +106,22 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
   readonly version = 'ralph-agent-v1';
 
   private readonly settings: RalphLoopAgentSettings<TOOLS>;
+  private readonly contextManager: RalphContextManager | null;
 
   constructor(settings: RalphLoopAgentSettings<TOOLS>) {
     this.settings = settings;
+    
+    // Initialize context manager if configured
+    this.contextManager = settings.contextManagement
+      ? new RalphContextManager(settings.contextManagement)
+      : null;
+  }
+
+  /**
+   * Get the context manager (if enabled).
+   */
+  getContextManager(): RalphContextManager | null {
+    return this.contextManager;
   }
 
   /**
@@ -180,6 +197,10 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
 
     const stopConditions = this.getStopConditions();
     const modelId = this.getModelId();
+    const model = this.settings.model;
+
+    // Reset context manager for new loop
+    this.contextManager?.clear();
 
     // Build the initial user message
     const initialUserMessage: ModelMessage = {
@@ -204,16 +225,64 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
       // Call onIterationStart
       await this.settings.onIterationStart?.({ iteration });
 
-      // Build messages for this iteration
-      const messages: Array<ModelMessage> = [
-        ...systemMessages,
-        initialUserMessage,
-        ...currentMessages,
-      ];
+      // Prepare messages with context management
+      let messagesToSend: Array<ModelMessage>;
+      let summarized = false;
+
+      if (this.contextManager) {
+        // Use context manager to prepare messages
+        const prepared = await this.contextManager.prepareMessagesForIteration(
+          currentMessages,
+          iteration,
+          model,
+          allResults[allResults.length - 1]
+        );
+        
+        messagesToSend = [
+          ...systemMessages,
+          initialUserMessage,
+          ...prepared.messages,
+        ];
+        summarized = prepared.summarized;
+
+        // If we summarized, notify
+        if (summarized && this.settings.onContextSummarized) {
+          const budget = this.contextManager.getTokenBudget();
+          await this.settings.onContextSummarized({
+            iteration,
+            summarizedIterations: iteration - (this.settings.contextManagement?.recentIterationsToKeep ?? 2),
+            tokensSaved: budget.available,
+          });
+        }
+
+        // Add context injection (summaries, change log)
+        const contextInjection = this.contextManager.buildContextInjection();
+        if (contextInjection) {
+          // Append to last system message or create new one
+          if (systemMessages.length > 0) {
+            const lastSystem = messagesToSend.find(m => m.role === 'system');
+            if (lastSystem && typeof lastSystem.content === 'string') {
+              lastSystem.content += contextInjection;
+            }
+          } else {
+            messagesToSend.unshift({
+              role: 'system',
+              content: contextInjection,
+            });
+          }
+        }
+      } else {
+        // No context management - use messages as-is
+        messagesToSend = [
+          ...systemMessages,
+          initialUserMessage,
+          ...currentMessages,
+        ];
+      }
 
       // If not the first iteration, add continuation prompt
       if (iteration > 1) {
-        messages.push({
+        messagesToSend.push({
           role: 'user',
           content: [
             {
@@ -224,10 +293,26 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
         });
       }
 
+      // Estimate tokens before sending (for debugging/monitoring)
+      if (this.contextManager) {
+        const estimatedTokens = messagesToSend.reduce(
+          (sum, m) => sum + estimateMessageTokens(m),
+          0
+        );
+        const budget = this.contextManager.getTokenBudget();
+        
+        // Log warning if approaching limit
+        if (estimatedTokens > budget.total * 0.9) {
+          console.warn(
+            `[RalphLoopAgent] Warning: Estimated ${estimatedTokens} tokens, approaching limit of ${budget.total}`
+          );
+        }
+      }
+
       // Run the inner tool loop
       const result = (await generateText({
         model: this.settings.model,
-        messages,
+        messages: messagesToSend,
         tools: this.settings.tools,
         toolChoice: this.settings.toolChoice,
         stopWhen: this.settings.toolStopWhen ?? stepCountIs(20),
@@ -303,6 +388,13 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
                 text: `Feedback: ${verification.reason}`,
               },
             ],
+          });
+
+          // Track feedback in context manager
+          this.contextManager?.addChangeLogEntry({
+            type: 'observation',
+            summary: 'Verification feedback received',
+            details: verification.reason.slice(0, 200),
           });
         }
       }
