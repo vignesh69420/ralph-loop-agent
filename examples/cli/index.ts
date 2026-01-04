@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Ralph Wiggum CLI - Autonomous Coding Agent
+ * Ralph Wiggum CLI Example - Autonomous Coding Agent
  *
  * A general-purpose agent for long-running autonomous coding tasks like:
  * - Code migrations (Jest → Vitest, CJS → ESM, etc.)
@@ -10,14 +10,9 @@
  * - Fixing bugs across multiple files
  *
  * Usage:
- *   npx tsx index.ts /path/to/repo                    # Uses PROMPT.md in repo
+ *   npx tsx index.ts /path/to/repo                    # Interactive mode or uses PROMPT.md
  *   npx tsx index.ts /path/to/repo "Your task"        # Uses provided prompt
  *   npx tsx index.ts /path/to/repo ./task.md          # Uses prompt from file
- *
- * The prompt can be:
- *   1. A PROMPT.md file in the target directory (auto-detected)
- *   2. A string passed as the second argument
- *   3. A path to a .md file passed as the second argument
  *
  * Environment:
  *   ANTHROPIC_API_KEY - Your Anthropic API key
@@ -28,13 +23,14 @@ import {
   iterationCountIs,
   type VerifyCompletionContext,
 } from 'ralph-wiggum';
-import { tool } from 'ai';
+import { tool, generateText } from 'ai';
 import { z } from 'zod';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { glob } from 'glob';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import prompts from 'prompts';
 
 const execAsync = promisify(exec);
 
@@ -72,7 +68,7 @@ if (!targetDir) {
   console.error('Usage: npx tsx index.ts <target-directory> [prompt or prompt-file]');
   console.error('');
   console.error('Examples:');
-  console.error('  npx tsx index.ts ~/Developer/myproject                     # Uses PROMPT.md in repo');
+  console.error('  npx tsx index.ts ~/Developer/myproject                     # Interactive mode');
   console.error('  npx tsx index.ts ~/Developer/myproject "Add TypeScript"    # Uses provided prompt');
   console.error('  npx tsx index.ts ~/Developer/myproject ./task.md           # Uses prompt from file');
   process.exit(1);
@@ -80,11 +76,346 @@ if (!targetDir) {
 
 const resolvedDir = path.resolve(targetDir.replace('~', process.env.HOME || ''));
 
+// Task types for the interview
+const TASK_TYPES = [
+  { title: 'Create', value: 'create', description: 'Create a new project, app, or library from scratch' },
+  { title: 'Migration', value: 'migration', description: 'Migrate between frameworks, libraries, or patterns' },
+  { title: 'Upgrade', value: 'upgrade', description: 'Upgrade dependencies or language versions' },
+  { title: 'Refactor', value: 'refactor', description: 'Restructure code without changing behavior' },
+  { title: 'Feature', value: 'feature', description: 'Implement a new feature from scratch' },
+  { title: 'Bug Fix', value: 'bugfix', description: 'Fix bugs across multiple files' },
+  { title: 'Other', value: 'other', description: 'Something else' },
+];
+
+const VERIFICATION_METHODS = [
+  { title: 'Run tests', value: 'tests', selected: true },
+  { title: 'Type check (tsc)', value: 'typecheck', selected: true },
+  { title: 'Lint', value: 'lint', selected: false },
+  { title: 'Build', value: 'build', selected: false },
+  { title: 'Manual verification', value: 'manual', selected: false },
+];
+
+/**
+ * Get a quick snapshot of the codebase for AI context.
+ */
+async function getCodebaseSnapshot(): Promise<string> {
+  const parts: string[] = [];
+  
+  // Try to read package.json
+  try {
+    const pkg = await fs.readFile(path.join(resolvedDir, 'package.json'), 'utf-8');
+    parts.push(`package.json:\n${pkg.slice(0, 2000)}`);
+  } catch {
+    // No package.json
+  }
+
+  // List top-level files and directories
+  try {
+    const entries = await fs.readdir(resolvedDir, { withFileTypes: true });
+    const listing = entries
+      .slice(0, 30)
+      .map(e => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
+      .join('\n');
+    parts.push(`Directory listing:\n${listing}`);
+  } catch {
+    // Can't read directory
+  }
+
+  // Try to find some source files
+  try {
+    const sourceFiles = await glob('**/*.{ts,js,tsx,jsx,py,go,rs}', { 
+      cwd: resolvedDir, 
+      nodir: true,
+      ignore: ['**/node_modules/**', '**/dist/**', '**/build/**'],
+    });
+    if (sourceFiles.length > 0) {
+      parts.push(`Source files (${sourceFiles.length} total):\n${sourceFiles.slice(0, 20).join('\n')}`);
+    }
+  } catch {
+    // Can't glob
+  }
+
+  return parts.join('\n\n') || 'Empty or new directory';
+}
+
+/**
+ * Use AI to generate suggestions for a question.
+ */
+async function generateSuggestions(
+  question: string,
+  context: { taskType: string; title: string; codebaseSnapshot: string }
+): Promise<string[]> {
+  try {
+    const result = await generateText({
+      model: 'anthropic/claude-opus-4.5' as any,
+      messages: [
+        {
+          role: 'system',
+          content: `You are helping a developer define a coding task. Generate exactly 3 brief, specific suggestions for the question asked. Each suggestion should be 1-2 sentences max. Return ONLY the 3 suggestions, one per line, no numbering or bullets.`,
+        },
+        {
+          role: 'user',
+          content: `Task type: ${context.taskType}
+Task title: ${context.title}
+
+Codebase info:
+${context.codebaseSnapshot}
+
+Question: ${question}
+
+Generate 3 specific suggestions:`,
+        },
+      ],
+      maxOutputTokens: 300,
+    });
+
+    const suggestions = result.text
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+      .slice(0, 3);
+
+    return suggestions.length >= 2 ? suggestions : ['Start with the main entry point', 'Focus on core functionality', 'Address one component at a time'];
+  } catch (error) {
+    // Fallback suggestions if AI fails
+    return ['Start with the basics', 'Focus on core functionality', 'Take an incremental approach'];
+  }
+}
+
+/**
+ * Create a multi-selection prompt with AI-generated options + "Other".
+ */
+async function selectWithAI(
+  message: string,
+  aiQuestion: string,
+  context: { taskType: string; title: string; codebaseSnapshot: string },
+  onCancel: () => void
+): Promise<string> {
+  log('  Generating suggestions...', 'dim');
+  const suggestions = await generateSuggestions(aiQuestion, context);
+  
+  const choices = [
+    ...suggestions.map(s => ({ title: s, value: s })),
+    { title: '✏️  Other (add custom)', value: '__other__' },
+  ];
+
+  const { selections } = await prompts({
+    type: 'multiselect',
+    name: 'selections',
+    message,
+    choices,
+    hint: '- Space to select, Enter to confirm',
+    instructions: false,
+  }, { onCancel });
+
+  const results: string[] = selections?.filter((s: string) => s !== '__other__') || [];
+
+  // If "Other" was selected, prompt for custom input
+  if (selections?.includes('__other__')) {
+    const { custom } = await prompts({
+      type: 'text',
+      name: 'custom',
+      message: 'Add your own:',
+      validate: (v: string) => v.length > 0 || 'Please enter something',
+    }, { onCancel });
+    if (custom) {
+      results.push(custom);
+    }
+  }
+
+  // If nothing selected, require at least one
+  if (results.length === 0) {
+    const { custom } = await prompts({
+      type: 'text',
+      name: 'custom',
+      message: 'Please enter at least one:',
+      validate: (v: string) => v.length > 0 || 'Required',
+    }, { onCancel });
+    return custom;
+  }
+
+  return results.join('. ');
+}
+
+/**
+ * Run the interactive interview to generate a task prompt.
+ */
+async function runInterview(): Promise<{ prompt: string; saveToFile: boolean }> {
+  console.log();
+  log('Let\'s define your task. Press Ctrl+C to cancel at any time.', 'dim');
+  console.log();
+
+  // Handle Ctrl+C gracefully
+  prompts.override({});
+  const onCancel = () => {
+    log('\nCancelled.', 'yellow');
+    process.exit(0);
+  };
+
+  // Step 1 & 2: Task type and title (user-defined)
+  const { taskType, title } = await prompts([
+    {
+      type: 'select',
+      name: 'taskType',
+      message: 'What type of task is this?',
+      choices: TASK_TYPES,
+      initial: 0,
+    },
+    {
+      type: 'text',
+      name: 'title',
+      message: 'Give your task a short title:',
+      initial: (prev: string) => {
+        const type = TASK_TYPES.find(t => t.value === prev);
+        return type ? `${type.title}: ` : '';
+      },
+      validate: (value: string) => value.length > 0 || 'Title is required',
+    },
+  ], { onCancel });
+
+  // If creating a new project, ask about tech stack
+  let techStack = '';
+  if (taskType === 'create') {
+    const { stack } = await prompts({
+      type: 'text',
+      name: 'stack',
+      message: 'What tech stack? (e.g., Next.js, React + Vite, Node.js + Express)',
+      validate: (v: string) => v.length > 0 || 'Please specify a tech stack',
+    }, { onCancel });
+    techStack = stack;
+  }
+
+  // Get codebase snapshot for AI context
+  log('\nAnalyzing codebase...', 'dim');
+  const codebaseSnapshot = await getCodebaseSnapshot();
+  const aiContext = { 
+    taskType, 
+    title, 
+    codebaseSnapshot: taskType === 'create' 
+      ? `New project with tech stack: ${techStack}\n\n${codebaseSnapshot}`
+      : codebaseSnapshot 
+  };
+
+  // Step 3: Description (AI-suggested)
+  const description = await selectWithAI(
+    'What needs to be done?',
+    'What specific work needs to be done for this task? Be concrete and actionable.',
+    aiContext,
+    onCancel
+  );
+
+  // Step 4: Context (AI-suggested)
+  const context = await selectWithAI(
+    'What context is important?',
+    'What technical context, constraints, or considerations are important for this task?',
+    aiContext,
+    onCancel
+  );
+
+  // Step 5: Focus areas (AI-suggested)
+  const focusAreasStr = await selectWithAI(
+    'Where should the agent focus?',
+    'What specific files, directories, or areas of the codebase should be the focus?',
+    aiContext,
+    onCancel
+  );
+  const focusAreas = focusAreasStr.split(',').map(s => s.trim()).filter(Boolean);
+
+  // Step 6: Verification (user-defined multiselect - keeping as is)
+  const { verification } = await prompts({
+    type: 'multiselect',
+    name: 'verification',
+    message: 'How should success be verified?',
+    choices: VERIFICATION_METHODS,
+    hint: '- Space to select, Enter to confirm',
+    instructions: false,
+  }, { onCancel });
+
+  // Step 7: Success criteria (AI-suggested)
+  const successCriteria = await selectWithAI(
+    'What does success look like?',
+    'What are the specific success criteria? How will we know the task is complete?',
+    aiContext,
+    onCancel
+  );
+
+  // Step 8: Save to file
+  const { saveToFile } = await prompts({
+    type: 'confirm',
+    name: 'saveToFile',
+    message: 'Save as PROMPT.md in the target directory?',
+    initial: true,
+  }, { onCancel });
+
+  const response = { taskType, title, techStack, description, context, focusAreas, verification, successCriteria, saveToFile };
+
+  // Build the prompt markdown
+  const promptLines: string[] = [];
+  
+  promptLines.push(`# ${response.title}`);
+  promptLines.push('');
+  promptLines.push(response.description);
+
+  if (response.techStack) {
+    promptLines.push('');
+    promptLines.push('## Tech Stack');
+    promptLines.push(response.techStack);
+  }
+  
+  if (response.context) {
+    promptLines.push('');
+    promptLines.push('## Context');
+    promptLines.push(response.context);
+  }
+
+  if (response.focusAreas && response.focusAreas.length > 0 && response.focusAreas[0] !== '') {
+    promptLines.push('');
+    promptLines.push('## Focus Areas');
+    for (const area of response.focusAreas) {
+      if (area.trim()) {
+        promptLines.push(`- ${area.trim()}`);
+      }
+    }
+  }
+
+  if (response.verification && response.verification.length > 0) {
+    promptLines.push('');
+    promptLines.push('## Verification');
+    const verificationMap: Record<string, string> = {
+      tests: 'Run tests to ensure nothing is broken',
+      typecheck: 'Type check with `tsc --noEmit`',
+      lint: 'Run linter and fix any issues',
+      build: 'Ensure the project builds successfully',
+      manual: 'Manual verification required',
+    };
+    for (const v of response.verification) {
+      promptLines.push(`- ${verificationMap[v] || v}`);
+    }
+  }
+
+  if (response.successCriteria) {
+    promptLines.push('');
+    promptLines.push('## Success Criteria');
+    promptLines.push(response.successCriteria);
+  }
+
+  promptLines.push('');
+  promptLines.push('## Guidelines');
+  promptLines.push('- Read files before modifying them');
+  promptLines.push('- Make incremental changes');
+  promptLines.push('- Use `editFile` for small changes instead of rewriting entire files');
+  promptLines.push('- Verify changes work before moving on');
+
+  const prompt = promptLines.join('\n');
+
+  return { prompt, saveToFile: response.saveToFile };
+}
+
 /**
  * Get the task prompt from various sources:
  * 1. CLI argument (string or path to .md file)
  * 2. PROMPT.md in the target directory
- * 3. Default fallback
+ * 3. Interactive interview
  */
 async function getTaskPrompt(): Promise<{ prompt: string; source: string }> {
   // If a prompt argument was provided
@@ -110,14 +441,20 @@ async function getTaskPrompt(): Promise<{ prompt: string; source: string }> {
     const content = await fs.readFile(promptMdPath, 'utf-8');
     return { prompt: content.trim(), source: promptMdPath };
   } catch {
-    // No PROMPT.md found
+    // No PROMPT.md found - run interactive interview
   }
 
-  // Default fallback
-  return {
-    prompt: 'Analyze this codebase and suggest improvements that could be made.',
-    source: 'default',
-  };
+  // Run interactive interview
+  log('No PROMPT.md found. Starting interactive setup...', 'yellow');
+  
+  const { prompt, saveToFile } = await runInterview();
+
+  if (saveToFile) {
+    await fs.writeFile(promptMdPath, prompt, 'utf-8');
+    log(`\n✓ Saved to ${promptMdPath}`, 'green');
+  }
+
+  return { prompt, source: saveToFile ? promptMdPath : 'interactive' };
 }
 
 // Define tools for the agent
@@ -334,11 +671,12 @@ async function main() {
     process.exit(1);
   }
 
-  // Get the task prompt
-  const { prompt: taskPrompt, source: promptSource } = await getTaskPrompt();
-
   logSection('Configuration');
   log(`Target: ${resolvedDir}`, 'bright');
+
+  // Get the task prompt (may run interactive interview)
+  const { prompt: taskPrompt, source: promptSource } = await getTaskPrompt();
+
   log(`Prompt source: ${promptSource}`, 'dim');
   
   logSection('Task');
@@ -347,6 +685,20 @@ async function main() {
     ? taskPrompt.slice(0, 500) + '...' 
     : taskPrompt;
   log(promptPreview, 'bright');
+
+  // Confirm before starting
+  console.log();
+  const { confirmed } = await prompts({
+    type: 'confirm',
+    name: 'confirmed',
+    message: 'Start the agent?',
+    initial: true,
+  });
+
+  if (!confirmed) {
+    log('Cancelled.', 'yellow');
+    process.exit(0);
+  }
 
   const agent = new RalphLoopAgent({
     model: 'anthropic/claude-opus-4.5' as any,
