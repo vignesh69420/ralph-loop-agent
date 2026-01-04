@@ -1,14 +1,18 @@
 #!/usr/bin/env npx tsx
 /**
- * CLI Example: Code Migration Agent
+ * Ralph Wiggum CLI - Autonomous Coding Agent
  *
- * This example demonstrates using RalphLoopAgent to perform code migrations.
- * The agent iteratively modifies files until the migration is verified complete.
+ * A general-purpose agent for long-running autonomous coding tasks like:
+ * - Code migrations (Jest → Vitest, CJS → ESM, etc.)
+ * - Dependency upgrades
+ * - Refactoring across large codebases
+ * - Creating new features from specifications
+ * - Fixing bugs across multiple files
  *
  * Usage:
  *   npx tsx index.ts /path/to/repo                    # Uses PROMPT.md in repo
- *   npx tsx index.ts /path/to/repo "Your prompt"      # Uses provided prompt
- *   npx tsx index.ts /path/to/repo ./custom-prompt.md # Uses custom prompt file
+ *   npx tsx index.ts /path/to/repo "Your task"        # Uses provided prompt
+ *   npx tsx index.ts /path/to/repo ./task.md          # Uses prompt from file
  *
  * The prompt can be:
  *   1. A PROMPT.md file in the target directory (auto-detected)
@@ -68,21 +72,21 @@ if (!targetDir) {
   console.error('Usage: npx tsx index.ts <target-directory> [prompt or prompt-file]');
   console.error('');
   console.error('Examples:');
-  console.error('  npx tsx index.ts ~/Developer/myproject                    # Uses PROMPT.md in repo');
-  console.error('  npx tsx index.ts ~/Developer/myproject "Migrate to Vitest" # Uses provided prompt');
-  console.error('  npx tsx index.ts ~/Developer/myproject ./migration.md      # Uses prompt from file');
+  console.error('  npx tsx index.ts ~/Developer/myproject                     # Uses PROMPT.md in repo');
+  console.error('  npx tsx index.ts ~/Developer/myproject "Add TypeScript"    # Uses provided prompt');
+  console.error('  npx tsx index.ts ~/Developer/myproject ./task.md           # Uses prompt from file');
   process.exit(1);
 }
 
 const resolvedDir = path.resolve(targetDir.replace('~', process.env.HOME || ''));
 
 /**
- * Get the migration prompt from various sources:
+ * Get the task prompt from various sources:
  * 1. CLI argument (string or path to .md file)
  * 2. PROMPT.md in the target directory
  * 3. Default fallback
  */
-async function getMigrationPrompt(): Promise<{ prompt: string; source: string }> {
+async function getTaskPrompt(): Promise<{ prompt: string; source: string }> {
   // If a prompt argument was provided
   if (promptArg) {
     // Check if it's a path to a .md file
@@ -111,23 +115,23 @@ async function getMigrationPrompt(): Promise<{ prompt: string; source: string }>
 
   // Default fallback
   return {
-    prompt: 'Analyze this codebase and suggest improvements or migrations that could be made.',
+    prompt: 'Analyze this codebase and suggest improvements that could be made.',
     source: 'default',
   };
 }
 
-// Define tools for the migration agent
+// Define tools for the agent
 const tools = {
   listFiles: tool({
     description: 'List files in a directory matching a glob pattern',
     inputSchema: z.object({
-      pattern: z.string().describe('Glob pattern like "**/*.js" or "tests/**/*"'),
+      pattern: z.string().describe('Glob pattern like "**/*.js" or "src/**/*.ts"'),
     }),
     execute: async ({ pattern }) => {
       try {
         const files = await glob(pattern, { cwd: resolvedDir, nodir: true });
         log(`  📂 Found ${files.length} files matching "${pattern}"`, 'dim');
-        return { success: true, files: files.slice(0, 50) }; // Limit to 50 files
+        return { success: true, files: files.slice(0, 100) }; // Limit to 100 files
       } catch (error) {
         return { success: false, error: String(error) };
       }
@@ -281,31 +285,31 @@ const tools = {
         log(`  🔧 Running: ${command}`, 'blue');
         const { stdout, stderr } = await execAsync(command, {
           cwd: resolvedDir,
-          timeout: 60000, // 60 second timeout
+          timeout: 120000, // 2 minute timeout
         });
         const output = stdout + (stderr ? `\nSTDERR: ${stderr}` : '');
         log(`  ✓ Command completed`, 'dim');
-        return { success: true, output: output.slice(0, 5000) }; // Limit output
+        return { success: true, output: output.slice(0, 8000) }; // Limit output
       } catch (error: any) {
         log(`  ✗ Command failed`, 'red');
         return {
           success: false,
           error: error.message,
-          stdout: error.stdout?.slice(0, 2000),
-          stderr: error.stderr?.slice(0, 2000),
+          stdout: error.stdout?.slice(0, 3000),
+          stderr: error.stderr?.slice(0, 3000),
         };
       }
     },
   }),
 
   markComplete: tool({
-    description: 'Mark the migration as complete with a summary',
+    description: 'Mark the task as complete with a summary of what was done',
     inputSchema: z.object({
-      summary: z.string().describe('Summary of changes made'),
+      summary: z.string().describe('Summary of what was accomplished'),
       filesModified: z.array(z.string()).describe('List of files that were modified'),
     }),
     execute: async ({ summary, filesModified }) => {
-      log(`  ✅ Migration marked complete`, 'green');
+      log(`  ✅ Task marked complete`, 'green');
       return { complete: true, summary, filesModified };
     },
   }),
@@ -314,12 +318,12 @@ const tools = {
 type Tools = typeof tools;
 
 // Track completion
-let migrationComplete = false;
-let migrationSummary = '';
+let taskComplete = false;
+let taskSummary = '';
 
 async function main() {
   log('╔════════════════════════════════════════════════════════════╗', 'magenta');
-  log('║         Ralph Wiggum Agent - Code Migration                ║', 'magenta');
+  log('║      Ralph Wiggum CLI Example - Autonomous Coding Agent    ║', 'magenta');
   log('╚════════════════════════════════════════════════════════════╝', 'magenta');
 
   // Verify directory exists
@@ -330,8 +334,8 @@ async function main() {
     process.exit(1);
   }
 
-  // Get the migration prompt
-  const { prompt: migrationPrompt, source: promptSource } = await getMigrationPrompt();
+  // Get the task prompt
+  const { prompt: taskPrompt, source: promptSource } = await getTaskPrompt();
 
   logSection('Configuration');
   log(`Target: ${resolvedDir}`, 'bright');
@@ -339,40 +343,34 @@ async function main() {
   
   logSection('Task');
   // Show first 500 chars of prompt, or full if shorter
-  const promptPreview = migrationPrompt.length > 500 
-    ? migrationPrompt.slice(0, 500) + '...' 
-    : migrationPrompt;
+  const promptPreview = taskPrompt.length > 500 
+    ? taskPrompt.slice(0, 500) + '...' 
+    : taskPrompt;
   log(promptPreview, 'bright');
 
   const agent = new RalphLoopAgent({
     model: 'anthropic/claude-opus-4.5' as any,
-    instructions: `You are a code migration expert. Your task is to migrate a codebase according to the user's instructions.
+    instructions: `You are an expert software engineer. Your task is to complete coding tasks autonomously.
 
 ## Guidelines:
-1. First, explore the codebase to understand its structure (list files, read key files like package.json)
-2. Plan the migration steps
+1. First, explore the codebase to understand its structure (list files, read key files like package.json, README, etc.)
+2. Plan your approach before making changes
 3. Make incremental changes - modify one file at a time
-4. After making changes, verify they work by running tests if available
-5. When the migration is complete and tests pass, use markComplete to finish
+4. After making changes, verify they work (run tests, type-check, lint, etc.)
+5. When the task is complete and verified, use markComplete to finish
 
 ## CRITICAL - Package Versions:
 Before adding ANY new dependency, you MUST check the latest version using:
   npm view <package-name> version
 
-For example, before adding vitest:
-  npm view vitest version
+Then use that exact version. NEVER guess or use outdated versions.
 
-Then use that exact version in package.json. NEVER guess or use outdated versions.
-
-## Important:
+## Best Practices:
 - Always read a file before modifying it
 - For SMALL CHANGES (fixing imports, renaming, type errors), use editFile instead of writeFile
 - editFile is more token-efficient and prevents full file rewrites
 - For LARGE FILES, use lineStart/lineEnd in readFile to read specific sections
-- Make sure to update package.json dependencies as needed
-- Create any necessary config files (like vitest.config.ts)
-- Run "npm install" or equivalent after modifying package.json
-- Run tests to verify the migration works
+- Run tests frequently to catch issues early
 - Be thorough but efficient
 
 Current working directory: ${resolvedDir}`,
@@ -389,7 +387,7 @@ Current working directory: ${resolvedDir}`,
       fileContextBudget: 60_000,       // Tokens for file content
     },
 
-    stopWhen: iterationCountIs(15),
+    stopWhen: iterationCountIs(20),
 
     verifyCompletion: async ({ result }: VerifyCompletionContext<Tools>) => {
       // Check if markComplete was called
@@ -401,22 +399,22 @@ Current working directory: ${resolvedDir}`,
             toolResult.output !== null &&
             'complete' in toolResult.output
           ) {
-            migrationComplete = true;
-            migrationSummary = (toolResult.output as any).summary;
+            taskComplete = true;
+            taskSummary = (toolResult.output as any).summary;
           }
         }
       }
 
-      if (migrationComplete) {
+      if (taskComplete) {
         return {
           complete: true,
-          reason: `Migration complete: ${migrationSummary}`,
+          reason: `Task complete: ${taskSummary}`,
         };
       }
 
       return {
         complete: false,
-        reason: 'Continue with the migration. Use markComplete when finished and tests pass.',
+        reason: 'Continue working on the task. Use markComplete when finished and verified.',
       };
     },
 
@@ -433,19 +431,19 @@ Current working directory: ${resolvedDir}`,
     },
   });
 
-  logSection('Starting Migration');
-  log('The agent will iterate until the migration is complete...', 'dim');
+  logSection('Starting Task');
+  log('The agent will iterate until the task is complete...', 'dim');
 
   const startTime = Date.now();
 
   try {
     const result = await agent.loop({
-      prompt: migrationPrompt,
+      prompt: taskPrompt,
     });
 
     const totalDuration = Date.now() - startTime;
 
-    logSection('Migration Result');
+    logSection('Result');
     log(`Status: ${result.completionReason}`, result.completionReason === 'verified' ? 'green' : 'yellow');
     log(`Iterations: ${result.iterations}`, 'blue');
     log(`Total time: ${Math.round(totalDuration / 1000)}s`, 'blue');
@@ -466,4 +464,3 @@ Current working directory: ${resolvedDir}`,
 }
 
 main();
-

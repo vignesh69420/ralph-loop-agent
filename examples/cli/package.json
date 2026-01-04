@@ -1,5 +1,5 @@
 {
-  "name": "cli-migration-example",
+  "name": "ralph-wiggum-cli-example",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -17,4 +17,3 @@
     "@types/node": "^22.15.21"
   }
 }
-

@@ -6,25 +6,32 @@ This directory contains example projects demonstrating how to use `ralph-wiggum`
 
 | Example | Description |
 |---------|-------------|
-| [cli-basic](./cli-basic) | Simple CLI math problem solver with tools and verification |
-| [cli-streaming](./cli-streaming) | Streaming output with abort signal support |
-| [cli-migration](./cli-migration) | Code migration agent with filesystem tools |
+| [cli](./cli) | General-purpose autonomous coding agent for migrations, upgrades, refactoring, etc. |
 
-## Running Examples
-
-Each example is a standalone project. To run one:
+## Running the CLI Example
 
 ```bash
-cd examples/cli-basic
+cd examples/cli
 pnpm install
-pnpm start
+pnpm start -- /path/to/your/project
+```
+
+Or with a specific prompt:
+
+```bash
+pnpm start -- /path/to/project "Migrate from Jest to Vitest"
+```
+
+Or create a `PROMPT.md` file in your target project and run:
+
+```bash
+pnpm start -- /path/to/project
 ```
 
 ## Environment Variables
 
-Most examples require an API key for the model provider:
+The CLI requires an API key (uses AI Gateway):
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here
 ```
-
