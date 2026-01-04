@@ -95,89 +95,126 @@ const VERIFICATION_METHODS = [
   { title: 'Manual verification', value: 'manual', selected: false },
 ];
 
+// Tools for the interviewer agent to explore the codebase
+const interviewerTools = {
+  listFiles: tool({
+    description: 'List files matching a glob pattern to understand project structure',
+    inputSchema: z.object({
+      pattern: z.string().describe('Glob pattern like "**/*.ts" or "src/**/*"'),
+    }),
+    execute: async ({ pattern }) => {
+      try {
+        const files = await glob(pattern, { 
+          cwd: resolvedDir, 
+          nodir: true,
+          ignore: ['**/node_modules/**', '**/dist/**', '**/.next/**', '**/build/**'],
+        });
+        return { files: files.slice(0, 50) };
+      } catch (error) {
+        return { error: String(error) };
+      }
+    },
+  }),
+
+  readFile: tool({
+    description: 'Read a file to understand its contents',
+    inputSchema: z.object({
+      filePath: z.string().describe('Path to the file'),
+    }),
+    execute: async ({ filePath }) => {
+      try {
+        const fullPath = path.join(resolvedDir, filePath);
+        const content = await fs.readFile(fullPath, 'utf-8');
+        return { content: content.slice(0, 5000) };
+      } catch (error) {
+        return { error: String(error) };
+      }
+    },
+  }),
+
+  listDirectory: tool({
+    description: 'List contents of a directory',
+    inputSchema: z.object({
+      dirPath: z.string().optional().describe('Directory path (default: root)'),
+    }),
+    execute: async ({ dirPath }) => {
+      try {
+        const fullPath = path.join(resolvedDir, dirPath || '.');
+        const entries = await fs.readdir(fullPath, { withFileTypes: true });
+        const listing = entries.slice(0, 50).map(e => ({
+          name: e.name,
+          type: e.isDirectory() ? 'dir' : 'file',
+        }));
+        return { entries: listing };
+      } catch (error) {
+        return { error: String(error) };
+      }
+    },
+  }),
+
+  provideSuggestions: tool({
+    description: 'Provide suggestions for a question based on your analysis of the codebase',
+    inputSchema: z.object({
+      suggestions: z.array(z.string()).length(3).describe('Exactly 3 specific, actionable suggestions based on the codebase'),
+    }),
+    execute: async ({ suggestions }) => {
+      return { suggestions };
+    },
+  }),
+};
+
 /**
- * Get a quick snapshot of the codebase for AI context.
- */
-async function getCodebaseSnapshot(): Promise<string> {
-  const parts: string[] = [];
-  
-  // Try to read package.json
-  try {
-    const pkg = await fs.readFile(path.join(resolvedDir, 'package.json'), 'utf-8');
-    parts.push(`package.json:\n${pkg.slice(0, 2000)}`);
-  } catch {
-    // No package.json
-  }
-
-  // List top-level files and directories
-  try {
-    const entries = await fs.readdir(resolvedDir, { withFileTypes: true });
-    const listing = entries
-      .slice(0, 30)
-      .map(e => `${e.isDirectory() ? '📁' : '📄'} ${e.name}`)
-      .join('\n');
-    parts.push(`Directory listing:\n${listing}`);
-  } catch {
-    // Can't read directory
-  }
-
-  // Try to find some source files
-  try {
-    const sourceFiles = await glob('**/*.{ts,js,tsx,jsx,py,go,rs}', { 
-      cwd: resolvedDir, 
-      nodir: true,
-      ignore: ['**/node_modules/**', '**/dist/**', '**/build/**'],
-    });
-    if (sourceFiles.length > 0) {
-      parts.push(`Source files (${sourceFiles.length} total):\n${sourceFiles.slice(0, 20).join('\n')}`);
-    }
-  } catch {
-    // Can't glob
-  }
-
-  return parts.join('\n\n') || 'Empty or new directory';
-}
-
-/**
- * Use AI to generate suggestions for a question.
+ * Use an AI agent to explore the codebase and generate contextual suggestions.
  */
 async function generateSuggestions(
   question: string,
-  context: { taskType: string; title: string; codebaseSnapshot: string }
+  context: { taskType: string; title: string; techStack?: string }
 ): Promise<string[]> {
   try {
     const result = await generateText({
       model: 'anthropic/claude-opus-4.5' as any,
+      tools: interviewerTools,
+      toolChoice: 'required',
+      stopWhen: stepCountIs(8),
       messages: [
         {
           role: 'system',
-          content: `You are helping a developer define a coding task. Generate exactly 3 brief, specific suggestions for the question asked. Each suggestion should be 1-2 sentences max. Return ONLY the 3 suggestions, one per line, no numbering or bullets.`,
+          content: `You are helping a developer define a coding task. Your job is to:
+
+1. FIRST: Explore the codebase to understand it (list files, read key files like package.json, README, etc.)
+2. THEN: Provide 3 specific, actionable suggestions for the question
+
+Be efficient - read only what you need to give good suggestions.
+End by calling provideSuggestions with exactly 3 suggestions based on what you learned.`,
         },
         {
           role: 'user',
           content: `Task type: ${context.taskType}
-Task title: ${context.title}
+Title: ${context.title}
+${context.techStack ? `Tech stack: ${context.techStack}` : ''}
 
-Codebase info:
-${context.codebaseSnapshot}
+Question I need suggestions for: "${question}"
 
-Question: ${question}
-
-Generate 3 specific suggestions:`,
+Explore the codebase, then call provideSuggestions with 3 specific suggestions.`,
         },
       ],
-      maxOutputTokens: 300,
     });
 
-    const suggestions = result.text
-      .split('\n')
-      .map(s => s.trim())
-      .filter(s => s.length > 0)
-      .slice(0, 3);
+    // Find the suggestions from tool calls
+    for (const step of result.steps) {
+      for (const toolResult of step.toolResults) {
+        if (toolResult.toolName === 'provideSuggestions') {
+          const output = toolResult.output as { suggestions: string[] };
+          if (output.suggestions?.length >= 2) {
+            return output.suggestions.slice(0, 3);
+          }
+        }
+      }
+    }
 
-    return suggestions.length >= 2 ? suggestions : ['Start with the main entry point', 'Focus on core functionality', 'Address one component at a time'];
+    // Fallback
+    return ['Start with the main entry point', 'Focus on core functionality', 'Address one component at a time'];
   } catch (error) {
-    // Fallback suggestions if AI fails
     return ['Start with the basics', 'Focus on core functionality', 'Take an incremental approach'];
   }
 }
@@ -188,10 +225,10 @@ Generate 3 specific suggestions:`,
 async function selectWithAI(
   message: string,
   aiQuestion: string,
-  context: { taskType: string; title: string; codebaseSnapshot: string },
+  context: { taskType: string; title: string; techStack?: string },
   onCancel: () => void
 ): Promise<string> {
-  log('  Generating suggestions...', 'dim');
+  log('  🔍 AI exploring codebase...', 'dim');
   const suggestions = await generateSuggestions(aiQuestion, context);
   
   const choices = [
@@ -284,16 +321,8 @@ async function runInterview(): Promise<{ prompt: string; saveToFile: boolean }> 
     techStack = stack;
   }
 
-  // Get codebase snapshot for AI context
-  log('\nAnalyzing codebase...', 'dim');
-  const codebaseSnapshot = await getCodebaseSnapshot();
-  const aiContext = { 
-    taskType, 
-    title, 
-    codebaseSnapshot: taskType === 'create' 
-      ? `New project with tech stack: ${techStack}\n\n${codebaseSnapshot}`
-      : codebaseSnapshot 
-  };
+  // Context for the AI interviewer
+  const aiContext = { taskType, title, techStack };
 
   // Step 3: Description (AI-suggested)
   const description = await selectWithAI(
