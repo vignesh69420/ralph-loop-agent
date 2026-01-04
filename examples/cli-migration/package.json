@@ -1,0 +1,20 @@
+{
+  "name": "cli-migration-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "ralph-wiggum": "workspace:*",
+    "ai": "^4.3.16",
+    "zod": "^3.24.4",
+    "glob": "^11.0.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.4",
+    "@types/node": "^22.15.21"
+  }
+}
+

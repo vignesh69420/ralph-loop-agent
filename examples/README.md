@@ -8,6 +8,7 @@ This directory contains example projects demonstrating how to use `ralph-wiggum`
 |---------|-------------|
 | [cli-basic](./cli-basic) | Simple CLI math problem solver with tools and verification |
 | [cli-streaming](./cli-streaming) | Streaming output with abort signal support |
+| [cli-migration](./cli-migration) | Code migration agent with filesystem tools |
 
 ## Running Examples
 
