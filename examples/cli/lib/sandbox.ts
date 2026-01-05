@@ -311,7 +311,8 @@ export async function closeSandbox(localDir: string): Promise<void> {
     try {
       // Copy files back before closing
       await copySandboxToLocal(localDir);
-      await sandbox.close();
+      // Type definitions may be incomplete for @vercel/sandbox
+      await (sandbox as unknown as { close: () => Promise<void> }).close();
       log('  🔒 Sandbox closed', 'dim');
     } catch {
       // Ignore close errors
