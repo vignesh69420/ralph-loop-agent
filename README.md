@@ -4,6 +4,18 @@
 
 > **Note**: This package is experimental. APIs may change between versions.
 
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| [ralph-loop-agent](./packages/ralph-loop-agent) | Core agent framework with loop control, stop conditions, and context management |
+
+## Examples
+
+| Example | Description |
+|---------|-------------|
+| [cli](./examples/cli) | Full-featured CLI agent with Vercel Sandbox, Playwright, PostgreSQL, and GitHub PR integration |
+
 ## Installation
 
 ```bash
