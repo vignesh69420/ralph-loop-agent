@@ -107,6 +107,10 @@ let interruptResolver: ((action: 'continue' | 'followup' | 'save' | 'quit') => v
 let pendingPlanUpdate: string | null = null;
 let currentTaskPrompt = '';
 
+// Pause mechanism - verifyCompletion awaits this when interrupt is pending
+let pausePromise: Promise<void> | null = null;
+let pauseResolver: (() => void) | null = null;
+
 // Cleanup function - just closes sandbox, doesn't copy files
 async function cleanup(exitCode: number = 0) {
   if (isCleaningUp) return;
@@ -317,6 +321,8 @@ async function showInterruptMenu(): Promise<'continue' | 'followup' | 'save' | '
     
     // Show plan update UI
     await updatePlanWithFollowUp(message);
+    // Reset Ctrl+C count after plan update flow (prompts may have incremented it)
+    menuCtrlCCount = 0;
     return 'continue'; // Continue with (possibly) updated plan
   }
   
@@ -344,6 +350,11 @@ const mainSigintHandler = async () => {
   interruptPending = true;
   menuCtrlCCount = 0;
   
+  // Create pause promise - verifyCompletion will await this
+  pausePromise = new Promise<void>((resolve) => {
+    pauseResolver = resolve;
+  });
+  
   // Swap to menu handler while menu is showing
   process.removeListener('SIGINT', mainSigintHandler);
   process.on('SIGINT', menuSigintHandler);
@@ -351,14 +362,25 @@ const mainSigintHandler = async () => {
   try {
     const action = await showInterruptMenu();
     interruptPending = false;
+    menuCtrlCCount = 0;
     
     // Restore main handler
     process.removeListener('SIGINT', menuSigintHandler);
     process.on('SIGINT', mainSigintHandler);
     
     if (action === 'quit') {
+      if (pauseResolver) {
+        pauseResolver();
+        pauseResolver = null;
+        pausePromise = null;
+      }
       await cleanup(130);
     } else if (action === 'save') {
+      if (pauseResolver) {
+        pauseResolver();
+        pauseResolver = null;
+        pausePromise = null;
+      }
       await saveAndCleanup(0);
     } else if (action === 'continue' || action === 'followup') {
       if (interruptResolver) {
@@ -366,11 +388,22 @@ const mainSigintHandler = async () => {
         interruptResolver = null;
       }
       log('  [>] Resuming...', 'green');
+      if (pauseResolver) {
+        pauseResolver();
+        pauseResolver = null;
+        pausePromise = null;
+      }
     }
   } catch {
     interruptPending = false;
+    menuCtrlCCount = 0;
     process.removeListener('SIGINT', menuSigintHandler);
     process.on('SIGINT', mainSigintHandler);
+    if (pauseResolver) {
+      pauseResolver();
+      pauseResolver = null;
+      pausePromise = null;
+    }
     log('  [>] Resuming...', 'green');
   }
 };
@@ -378,8 +411,8 @@ const mainSigintHandler = async () => {
 process.on('SIGINT', mainSigintHandler);
 
 process.on('SIGTERM', () => {
-  log('\n\n  [!] Terminated', 'yellow');
-  cleanup(143);
+  // Treat SIGTERM same as SIGINT - show menu instead of immediately terminating
+  mainSigintHandler();
 });
 
 // Handle uncaught errors
@@ -610,6 +643,13 @@ Sandbox dev server URL: ${sandboxDomain}`;
     stopWhen: iterationCountIs(20),
 
     verifyCompletion: async ({ result, originalPrompt }: VerifyCompletionContext<CodingTools>) => {
+      // If there's an interrupt pending, wait for user to finish with the menu
+      if (pausePromise) {
+        log('  [~] Paused - waiting for user input...', 'yellow');
+        await pausePromise;
+        log('  [>] Resuming verification...', 'green');
+      }
+
       // Check if there's a pending plan update from Ctrl+C follow-up
       if (pendingPlanUpdate) {
         const update = pendingPlanUpdate;
