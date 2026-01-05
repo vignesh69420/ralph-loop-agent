@@ -22,7 +22,7 @@ export function createCodingAgentTools() {
         try {
           const result = await runInSandbox(`find . -type f -path "*${pattern}*" | grep -v node_modules | grep -v .git | head -100`);
           const files = result.stdout.split('\n').filter(f => f.trim()).map(f => f.replace(/^\.\//, ''));
-          log(`  📂 Found ${files.length} files matching "${pattern}"`, 'dim');
+          log(`      Found ${files.length} files matching "${pattern}"`, 'dim');
           return { success: true, files };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -55,7 +55,7 @@ export function createCodingAgentTools() {
             const numberedContent = selectedLines
               .map((line, i) => `${String(start + i).padStart(6)}| ${line}`)
               .join('\n');
-            log(`  📖 Read: ${filePath} lines ${start}-${end} of ${totalLines}`, 'dim');
+            log(`      Read: ${filePath} lines ${start}-${end} of ${totalLines}`, 'dim');
             return { 
               success: true, 
               content: numberedContent,
@@ -72,7 +72,7 @@ export function createCodingAgentTools() {
               .map((line, i) => `${String(i + 1).padStart(6)}| ${line}`)
               .join('\n');
             const warning = `\n\n... [TRUNCATED: File has ${totalLines} lines, showing 1-${maxLines}. Use lineStart/lineEnd to read specific sections] ...`;
-            log(`  📖 Read: ${filePath} (TRUNCATED: ${totalLines} lines, showing 1-${maxLines})`, 'yellow');
+            log(`  [!] Read: ${filePath} (TRUNCATED: ${totalLines} lines, showing 1-${maxLines})`, 'yellow');
             return { 
               success: true, 
               content: numberedContent + warning,
@@ -82,7 +82,7 @@ export function createCodingAgentTools() {
             };
           }
           
-          log(`  📖 Read: ${filePath} (${content.length} chars)`, 'dim');
+          log(`      Read: ${filePath} (${content.length} chars)`, 'dim');
           return { success: true, content, totalLines };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -104,7 +104,7 @@ export function createCodingAgentTools() {
             await runInSandbox(`mkdir -p "${dir}"`);
           }
           await writeToSandbox(filePath, content);
-          log(`  ✏️  Wrote: ${filePath}`, 'green');
+          log(`  [+] Wrote: ${filePath}`, 'green');
           return { success: true, filePath };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -145,7 +145,7 @@ export function createCodingAgentTools() {
           const newContent = content.replace(old_string, new_string);
           await writeToSandbox(filePath, newContent);
           
-          log(`  🔧 Edited: ${filePath}`, 'green');
+          log(`  [~] Edited: ${filePath}`, 'green');
           return { 
             success: true, 
             filePath,
@@ -166,7 +166,7 @@ export function createCodingAgentTools() {
       execute: async ({ filePath }) => {
         try {
           await runInSandbox(`rm -f "${filePath}"`);
-          log(`  🗑️  Deleted: ${filePath}`, 'yellow');
+          log(`  [x] Deleted: ${filePath}`, 'yellow');
           return { success: true, filePath };
         } catch (error) {
           return { success: false, error: String(error) };
@@ -181,14 +181,14 @@ export function createCodingAgentTools() {
       }),
       execute: async ({ command }) => {
         try {
-          log(`  🔧 Running: ${command}`, 'blue');
+          log(`  [>] Running: ${command}`, 'blue');
           const result = await runInSandbox(command);
           const output = result.stdout + (result.stderr ? `\nSTDERR: ${result.stderr}` : '');
           
           if (result.exitCode === 0) {
-            log(`  ✓ Command completed`, 'dim');
+            log(`      Command completed`, 'dim');
           } else {
-            log(`  ✗ Command failed (exit ${result.exitCode})`, 'red');
+            log(`  [x] Command failed (exit ${result.exitCode})`, 'red');
           }
           
           return { 
@@ -197,7 +197,7 @@ export function createCodingAgentTools() {
             exitCode: result.exitCode,
           };
         } catch (error: any) {
-          log(`  ✗ Command failed`, 'red');
+          log(`  [x] Command failed`, 'red');
           return { success: false, error: error.message };
         }
       },
@@ -236,7 +236,7 @@ export function createCodingAgentTools() {
           // Wait a moment for server to start
           await new Promise(resolve => setTimeout(resolve, 3000));
           
-          log(`  🚀 Dev server starting at ${sandboxDomain}`, 'green');
+          log(`  [+] Dev server starting at ${sandboxDomain}`, 'green');
           return { 
             success: true, 
             url: sandboxDomain,
@@ -273,7 +273,7 @@ export function createCodingAgentTools() {
         filesModified: z.array(z.string()).describe('List of files that were modified'),
       }),
       execute: async ({ summary, filesModified }) => {
-        log(`  ✅ Task marked complete`, 'green');
+        log(`  [+] Task marked complete`, 'green');
         return { complete: true, summary, filesModified };
       },
     }),

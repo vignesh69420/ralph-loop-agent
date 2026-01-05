@@ -20,7 +20,7 @@ async function exploreCodebase(taskType: string, title: string, techStack?: stri
     return codebaseAnalysis;
   }
 
-  log('  🔍 AI exploring codebase...', 'cyan');
+  log('  [-] AI exploring codebase...', 'cyan');
 
   try {
     const interviewerTools = createInterviewerTools();
@@ -61,12 +61,12 @@ Please explore this codebase and give me a summary of:
     for (const step of result.steps) {
       toolCallCount += step.toolResults.length;
     }
-    log(`     ✓ Explored (${toolCallCount} files/dirs checked)`, 'dim');
+    log(`      [+] Explored (${toolCallCount} files/dirs checked)`, 'dim');
 
     codebaseAnalysis = result.text || 'Unable to analyze codebase';
     return codebaseAnalysis;
   } catch (error) {
-    log(`     ⚠️ Error exploring: ${error}`, 'yellow');
+    log(`      [!] Error exploring: ${error}`, 'yellow');
     codebaseAnalysis = 'New or empty project';
     return codebaseAnalysis;
   }
@@ -132,8 +132,8 @@ async function selectWithAI(
   
   const choices = [
     ...suggestions.map(s => ({ title: s, value: s })),
-    { title: '✏️  Other (add custom)', value: '__other__' },
-    { title: '⏭️  Skip this question', value: '__skip__' },
+    { title: '[+] Other (add custom)', value: '__other__' },
+    { title: '[-] Skip this question', value: '__skip__' },
   ];
 
   const { selections } = await prompts({
@@ -367,7 +367,7 @@ export async function getTaskPrompt(promptArg: string | undefined): Promise<{ pr
 
   if (saveToFile) {
     await writeToSandbox('PROMPT.md', prompt);
-    log(`\n✓ Saved PROMPT.md to sandbox`, 'green');
+    log(`\n[+] Saved PROMPT.md to sandbox`, 'green');
   }
 
   return { prompt, source: saveToFile ? 'PROMPT.md' : 'interactive' };

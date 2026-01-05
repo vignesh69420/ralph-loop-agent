@@ -91,7 +91,7 @@ async function loadGitignore(rootDir: string): Promise<Ignore> {
  * Initialize the sandbox and copy files from local directory
  */
 export async function initializeSandbox(localDir: string): Promise<void> {
-  log('  🔒 Creating secure sandbox...', 'cyan');
+  log('  [-] Creating secure sandbox...', 'cyan');
   
   sandbox = await Sandbox.create({
     runtime: 'node22',
@@ -104,8 +104,8 @@ export async function initializeSandbox(localDir: string): Promise<void> {
   });
 
   sandboxDomain = sandbox.domain(3000);
-  log(`  ✓ Sandbox created (${sandbox.sandboxId})`, 'green');
-  log(`  📡 Dev server URL: ${sandboxDomain}`, 'dim');
+  log(`  [+] Sandbox created (${sandbox.sandboxId})`, 'green');
+  log(`      Dev server URL: ${sandboxDomain}`, 'dim');
 
   // Copy files from local directory to sandbox
   await copyLocalToSandbox(localDir);
@@ -115,7 +115,7 @@ export async function initializeSandbox(localDir: string): Promise<void> {
  * Copy files from local directory to sandbox (respects .gitignore)
  */
 async function copyLocalToSandbox(localDir: string): Promise<void> {
-  log('  📦 Copying project files to sandbox...', 'cyan');
+  log('  [-] Copying project files to sandbox...', 'cyan');
   
   // Load gitignore rules
   const ig = await loadGitignore(localDir);
@@ -165,9 +165,9 @@ async function copyLocalToSandbox(localDir: string): Promise<void> {
       const batch = filesToCopy.slice(i, i + batchSize);
       await sandbox!.writeFiles(batch);
     }
-    log(`  ✓ Copied ${filesToCopy.length} files to sandbox`, 'green');
+    log(`  [+] Copied ${filesToCopy.length} files to sandbox`, 'green');
   } else {
-    log(`  ℹ️  Starting with empty sandbox (new project)`, 'dim');
+    log(`  [i] Starting with empty sandbox (new project)`, 'dim');
   }
 }
 
@@ -250,7 +250,7 @@ async function loadSandboxGitignore(): Promise<Ignore> {
  * Copy files from sandbox back to local directory (respects .gitignore)
  */
 async function copySandboxToLocal(localDir: string): Promise<void> {
-  log('  📦 Copying changes back to local...', 'cyan');
+  log('  [-] Copying changes back to local...', 'cyan');
   
   // Load gitignore rules from sandbox
   const ig = await loadSandboxGitignore();
@@ -300,7 +300,7 @@ async function copySandboxToLocal(localDir: string): Promise<void> {
     }
   }
 
-  log(`  ✓ Copied ${copiedCount} files back to local${skippedCount > 0 ? ` (${skippedCount} ignored)` : ''}`, 'green');
+  log(`  [+] Copied ${copiedCount} files back to local${skippedCount > 0 ? ` (${skippedCount} ignored)` : ''}`, 'green');
 }
 
 /**
@@ -313,7 +313,7 @@ export async function closeSandbox(localDir: string): Promise<void> {
       await copySandboxToLocal(localDir);
       // Type definitions may be incomplete for @vercel/sandbox
       await (sandbox as unknown as { close: () => Promise<void> }).close();
-      log('  🔒 Sandbox closed', 'dim');
+      log('  [-] Sandbox closed', 'dim');
     } catch {
       // Ignore close errors
     }

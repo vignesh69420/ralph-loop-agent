@@ -95,13 +95,13 @@ async function main() {
     }
 
     await fs.mkdir(resolvedDir, { recursive: true });
-    log(`✓ Created ${resolvedDir}`, 'green');
+    log(`  [+] Created ${resolvedDir}`, 'green');
   }
 
   logSection('Configuration');
   log(`Local target: ${resolvedDir}`, 'bright');
-  log(`⚠️  All code runs in an isolated sandbox`, 'yellow');
-  log(`   Changes will be copied back when complete`, 'dim');
+  log(`  [!] All code runs in an isolated sandbox`, 'yellow');
+  log(`      Changes will be copied back when complete`, 'dim');
 
   // Initialize sandbox and copy files
   logSection('Sandbox Setup');
@@ -228,15 +228,15 @@ Sandbox dev server URL: ${sandboxDomain}`;
         );
 
         if (judgeResult.approved) {
-          log('  📤 Task approved by judge!', 'green');
+          log('  [+] Task approved by judge!', 'green');
           return {
             complete: true,
             reason: `Task complete: ${taskSummary}\n\nJudge verdict: ${judgeResult.feedback}`,
           };
         } else {
           // Judge requested changes - feed back to the agent
-          log('  📤 Sending judge feedback to coding agent...', 'yellow');
-          log(`     Feedback preview: ${judgeResult.feedback.slice(0, 150)}...`, 'dim');
+          log('  [>] Sending judge feedback to coding agent...', 'yellow');
+          log(`      Feedback preview: ${judgeResult.feedback.slice(0, 150)}...`, 'dim');
           return {
             complete: false,
             reason: `The judge reviewed your work and requested changes:\n\n${judgeResult.feedback}\n\nPlease address these issues and use markComplete again when done.`,
@@ -255,11 +255,11 @@ Sandbox dev server URL: ${sandboxDomain}`;
     },
 
     onIterationEnd: ({ iteration, duration }: { iteration: number; duration: number }) => {
-      log(`  ⏱️  Duration: ${duration}ms`, 'dim');
+      log(`      Duration: ${duration}ms`, 'dim');
     },
 
     onContextSummarized: ({ iteration, summarizedIterations, tokensSaved }: { iteration: number; summarizedIterations: number; tokensSaved: number }) => {
-      log(`  📝 Context summarized: ${summarizedIterations} iterations compressed, ${tokensSaved} tokens available`, 'yellow');
+      log(`  [~] Context summarized: ${summarizedIterations} iterations compressed, ${tokensSaved} tokens available`, 'yellow');
     },
   });
 

@@ -14,7 +14,7 @@ export async function runJudge(
   workSummary: string,
   filesModified: string[]
 ): Promise<{ approved: boolean; feedback: string }> {
-  log('  🧑‍⚖️  Judge reviewing...', 'cyan');
+  log('  [-] Judge reviewing...', 'cyan');
 
   try {
     const judgeTools = createJudgeTools();
@@ -56,24 +56,24 @@ Run verification commands (type-check, build) and give your verdict.`,
     });
 
     // Log all tool calls for debugging
-    log(`  📋 Judge made ${result.steps.length} steps`, 'dim');
+    log(`      Judge made ${result.steps.length} steps`, 'dim');
     for (const step of result.steps) {
       for (const toolResult of step.toolResults) {
         if (toolResult.toolName === 'runCommand') {
-          log(`     → ran command`, 'dim');
+          log(`      | ran command`, 'dim');
         } else if (toolResult.toolName === 'readFile') {
-          log(`     → read file`, 'dim');
+          log(`      | read file`, 'dim');
         } else if (toolResult.toolName === 'listFiles') {
-          log(`     → listed files`, 'dim');
+          log(`      | listed files`, 'dim');
         } else if (toolResult.toolName === 'approveTask') {
           const output = toolResult.output as { approved: boolean; reason: string };
-          log('  ✅ Judge APPROVED', 'green');
-          log(`     Reason: ${output.reason.slice(0, 100)}...`, 'dim');
+          log('  [+] Judge APPROVED', 'green');
+          log(`      Reason: ${output.reason.slice(0, 100)}...`, 'dim');
           return { approved: true, feedback: output.reason };
         } else if (toolResult.toolName === 'requestChanges') {
           const output = toolResult.output as { approved: boolean; issues: string[]; suggestions: string[] };
-          log('  ❌ Judge REQUESTED CHANGES', 'yellow');
-          log(`     Issues: ${output.issues.length}`, 'dim');
+          log('  [x] Judge REQUESTED CHANGES', 'yellow');
+          log(`      Issues: ${output.issues.length}`, 'dim');
           const feedback = [
             'Issues found:',
             ...output.issues.map(i => `- ${i}`),
@@ -87,8 +87,8 @@ Run verification commands (type-check, build) and give your verdict.`,
     }
 
     // No verdict tool was called
-    log('  ⚠️  Judge did NOT call approveTask or requestChanges!', 'red');
-    log(`     Final text: ${result.text.slice(0, 200)}...`, 'dim');
+    log('  [!] Judge did NOT call approveTask or requestChanges!', 'red');
+    log(`      Final text: ${result.text.slice(0, 200)}...`, 'dim');
     
     // Auto-approve if judge didn't give verdict but didn't find issues
     return { 
@@ -96,7 +96,7 @@ Run verification commands (type-check, build) and give your verdict.`,
       feedback: 'Judge completed review without explicit verdict. Auto-approving based on successful verification.' 
     };
   } catch (error) {
-    log(`  ⚠️  Judge error: ${error}`, 'red');
+    log(`  [!] Judge error: ${error}`, 'red');
     // On error, auto-approve to avoid infinite loop
     return { approved: true, feedback: 'Judge encountered an error. Auto-approving.' };
   }
