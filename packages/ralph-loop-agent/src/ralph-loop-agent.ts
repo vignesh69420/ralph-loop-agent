@@ -72,6 +72,11 @@ export interface RalphLoopAgentResult<TOOLS extends ToolSet = {}> {
    * All results from each iteration.
    */
   readonly allResults: Array<GenerateTextResult<TOOLS, never>>;
+
+  /**
+   * Aggregated token usage across all iterations.
+   */
+  readonly totalUsage: LanguageModelUsage;
 }
 
 // Re-export stop condition helpers
@@ -409,6 +414,7 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
       reason,
       result: finalResult,
       allResults,
+      totalUsage,
     };
   }
 

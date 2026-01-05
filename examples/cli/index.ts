@@ -26,12 +26,13 @@
 // Load environment variables from .env file
 import 'dotenv/config';
 
-import { RalphLoopAgent, iterationCountIs, type VerifyCompletionContext } from 'ralph-loop-agent';
+import { RalphLoopAgent, iterationCountIs, addLanguageModelUsage, type VerifyCompletionContext } from 'ralph-loop-agent';
+import type { LanguageModelUsage, GenerateTextResult } from 'ai';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import prompts from 'prompts';
 
-import { log, logSection } from './lib/logger.js';
+import { log, logSection, logUsageReport } from './lib/logger.js';
 import { MAX_FILE_CHARS } from './lib/constants.js';
 import { initializeSandbox, closeSandbox, readFromSandbox, getSandboxDomain } from './lib/sandbox.js';
 import { getTaskPrompt, runInterviewAndGetPrompt } from './lib/interview.js';
@@ -72,6 +73,15 @@ for (const envVar of requiredEnvVars) {
 let taskSummary = '';
 let pendingJudgeReview = false;
 let lastFilesModified: string[] = [];
+
+// Track running token usage
+let runningUsage: LanguageModelUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+};
+
+const AGENT_MODEL = 'anthropic/claude-opus-4.5';
 
 async function main() {
   log('╔════════════════════════════════════════════════════════════╗', 'magenta');
@@ -207,7 +217,7 @@ Sandbox dev server URL: ${sandboxDomain}`;
   const tools = createCodingAgentTools();
 
   const agent = new RalphLoopAgent({
-    model: 'anthropic/claude-opus-4.5',
+    model: AGENT_MODEL,
     instructions,
     tools,
 
@@ -277,8 +287,15 @@ Sandbox dev server URL: ${sandboxDomain}`;
       logSection(`Iteration ${iteration}`);
     },
 
-    onIterationEnd: ({ iteration, duration }: { iteration: number; duration: number }) => {
+    onIterationEnd: ({ iteration, duration, result }: { iteration: number; duration: number; result: GenerateTextResult<CodingTools, never> }) => {
       log(`      Duration: ${duration}ms`, 'dim');
+      
+      // Update running usage
+      runningUsage = addLanguageModelUsage(runningUsage, result.usage);
+      
+      // Show usage report for this iteration
+      logUsageReport(result.usage, AGENT_MODEL, `Iteration ${iteration}`);
+      logUsageReport(runningUsage, AGENT_MODEL, 'Running Total');
     },
 
     onContextSummarized: ({ iteration, summarizedIterations, tokensSaved }: { iteration: number; summarizedIterations: number; tokensSaved: number }) => {
@@ -303,6 +320,10 @@ Sandbox dev server URL: ${sandboxDomain}`;
     log(`Status: ${result.completionReason}`, result.completionReason === 'verified' ? 'green' : 'yellow');
     log(`Iterations: ${result.iterations}`, 'blue');
     log(`Total time: ${Math.round(totalDuration / 1000)}s`, 'blue');
+
+    // Show final usage report
+    logSection('Final Usage Report');
+    logUsageReport(result.totalUsage, AGENT_MODEL, 'Total');
 
     if (result.reason) {
       logSection('Summary');
