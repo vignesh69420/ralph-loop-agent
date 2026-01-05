@@ -1,10 +1,10 @@
 # ralph-loop-agent
 
+**Continuous Autonomy for the [AI SDK](https://ai-sdk.dev/)**
+
 > **⚠️ EXPERIMENTAL - USE AT YOUR OWN RISK**
 >
 > This package is highly experimental. The iterative nature of the Ralph Wiggum technique can result in **high token usage and significant costs**. Each iteration consumes tokens, and the agent may run multiple iterations before completing a task. Monitor your usage carefully and set appropriate `stopWhen` limits.
-
-An iterative AI agent that implements the "Ralph Wiggum" technique - continuously running until a task is completed.
 
 ## Installation
 
@@ -14,21 +14,46 @@ npm install ralph-loop-agent ai zod
 
 ## What is the Ralph Wiggum Technique?
 
-Named after the lovably persistent character from *The Simpsons*, the Ralph Wiggum technique is an iterative approach that keeps running an AI agent until a task is evaluated as complete. Unlike a standard tool loop that stops when the model stops calling tools, Ralph keeps trying until the job is done.
+The Ralph Wiggum technique is a development methodology built around continuous AI agent loops. At its core, it's elegantly simple: keep feeding an AI agent a task until the job is done.
+
+Named after the lovably persistent Ralph Wiggum from *The Simpsons*, this approach embraces iterative improvement over single-shot perfection. Where traditional agentic workflows stop when an LLM finishes calling tools, Ralph keeps going—verifying completion, providing feedback, and running another iteration until the task actually succeeds.
+
+Think of it as `while (true)` for AI autonomy: the agent works, an evaluator checks the result, and if it's not done, the agent tries again with context from previous attempts.
 
 ```
-┌─────────────────────────────────────────────────┐
-│  ┌─────────────────────────────────┐            │
-│  │  Inner tool loop                │            │
-│  │  (LLM ↔ tools until no more)    │            │
-│  └─────────────────────────────────┘            │
-│              ↓                                  │
-│  verifyCompletion: "Is the TASK complete?"      │
-│              ↓                                  │
-│       No? → Run another iteration               │
-│       Yes? → Return final result                │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│                   Ralph Loop (outer)                 │
+│  ┌────────────────────────────────────────────────┐  │
+│  │  AI SDK Tool Loop (inner)                      │  │
+│  │  LLM ↔ tools ↔ LLM ↔ tools ... until done      │  │
+│  └────────────────────────────────────────────────┘  │
+│                         ↓                            │
+│  verifyCompletion: "Is the TASK actually complete?"  │
+│                         ↓                            │
+│       No? → Inject feedback → Run another iteration  │
+│       Yes? → Return final result                     │
+└──────────────────────────────────────────────────────┘
 ```
+
+### Why Continuous Autonomy?
+
+Standard AI SDK tool loops are great—but they stop as soon as the model finishes its tool calls. That works for simple tasks, but complex work often requires:
+
+- **Verification**: Did the agent actually accomplish what was asked?
+- **Persistence**: Retry on failure instead of giving up
+- **Feedback loops**: Guide the agent based on real-world checks
+- **Long-running tasks**: Migrations, refactors, multi-file changes
+
+Ralph wraps the AI SDK's `generateText` in an outer loop that keeps iterating until your `verifyCompletion` function confirms success—or you hit a safety limit.
+
+## Features
+
+- 🔄 **Iterative completion** — Runs until `verifyCompletion` says the task is done
+- 🛠️ **Full AI SDK compatibility** — Uses AI Gateway string format, supports all AI SDK tools
+- 📊 **Flexible stop conditions** — Limit by iterations, tokens, or cost
+- 🔍 **Context management** — Built-in summarization for long-running loops
+- 📡 **Streaming support** — Stream the final iteration for responsive UIs
+- 🎯 **Feedback injection** — Failed verifications can guide the next attempt
 
 ## Usage
 
@@ -161,9 +186,13 @@ Note: Streaming runs non-streaming iterations until verification passes or the f
 | `onIterationStart` | `function` | ❌ | - | Called at start of each iteration |
 | `onIterationEnd` | `function` | ❌ | - | Called at end of each iteration |
 
+### Stop Conditions
+
+Ralph provides multiple ways to limit agent execution:
+
 #### `iterationCountIs(n)`
 
-Creates a stop condition that stops after `n` iterations.
+Stop after `n` iterations.
 
 ```typescript
 import { iterationCountIs } from 'ralph-loop-agent';
@@ -171,9 +200,41 @@ import { iterationCountIs } from 'ralph-loop-agent';
 stopWhen: iterationCountIs(50)
 ```
 
-#### `verifyCompletion`
+#### `tokenCountIs(n)`
 
-Function to verify if the task is complete:
+Stop when total token usage (input + output) exceeds `n`.
+
+```typescript
+import { tokenCountIs } from 'ralph-loop-agent';
+
+stopWhen: tokenCountIs(100_000)
+```
+
+#### `costIs(maxCost, rates?)`
+
+Stop when estimated cost exceeds `maxCost`. Uses built-in pricing for common models, or accepts custom rates.
+
+```typescript
+import { costIs } from 'ralph-loop-agent';
+
+// Stop at $5
+stopWhen: costIs(5.00)
+
+// With custom pricing
+stopWhen: costIs(5.00, { inputTokenCost: 0.01, outputTokenCost: 0.03 })
+```
+
+#### Combining Stop Conditions
+
+Pass an array to stop when *any* condition is met:
+
+```typescript
+stopWhen: [iterationCountIs(50), tokenCountIs(100_000), costIs(5.00)]
+```
+
+### `verifyCompletion`
+
+Function to verify if the task is complete. Return `{ complete: true }` to stop the loop, or `{ complete: false, reason: "..." }` to continue with feedback:
 
 ```typescript
 verifyCompletion: async ({ result, iteration, allResults, originalPrompt }) => ({
@@ -182,10 +243,11 @@ verifyCompletion: async ({ result, iteration, allResults, originalPrompt }) => (
 })
 ```
 
-#### Methods
+The `reason` string is injected into the next iteration, helping the agent understand what still needs work.
 
-**`loop(options)`** - Runs the agent loop until completion
-- Returns: `RalphLoopAgentResult`
+### Methods
+
+**`loop(options)`** — Runs the agent loop until completion
 
 ```typescript
 interface RalphLoopAgentResult {
@@ -193,13 +255,15 @@ interface RalphLoopAgentResult {
   iterations: number;                        // Number of iterations run
   completionReason: 'verified' | 'max-iterations' | 'aborted';
   reason?: string;                           // Reason from verifyCompletion
-  result: GenerateTextResult;               // Full result from last iteration
-  allResults: GenerateTextResult[];         // All iteration results
+  result: GenerateTextResult;                // Full result from last iteration
+  allResults: GenerateTextResult[];          // All iteration results
+  totalUsage: LanguageModelUsage;            // Aggregated token usage
 }
 ```
 
-**`stream(options)`** - Streams the final iteration
-- Returns: `StreamTextResult`
+**`stream(options)`** — Streams the final iteration
+
+Runs non-streaming iterations until verification passes, then streams the final one. Returns `StreamTextResult`.
 
 ## License
 
