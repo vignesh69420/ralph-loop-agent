@@ -18,6 +18,81 @@ export function createCodingAgentTools() {
   const sandboxDomain = getSandboxDomain();
 
   return {
+    detectPackageManager: tool({
+      description: 'Detect which package manager to use based on lock files. ALWAYS call this before running install commands. Returns the package manager name and the commands to use.',
+      inputSchema: z.object({}),
+      execute: async () => {
+        try {
+          // Check for lock files to determine package manager
+          const checks = await Promise.all([
+            runInSandbox('test -f pnpm-lock.yaml && echo "found"'),
+            runInSandbox('test -f yarn.lock && echo "found"'),
+            runInSandbox('test -f package-lock.json && echo "found"'),
+            runInSandbox('test -f bun.lockb && echo "found"'),
+            runInSandbox('test -f package.json && echo "found"'),
+          ]);
+          
+          const [pnpm, yarn, npm, bun, hasPackageJson] = checks.map(r => r.stdout.includes('found'));
+          
+          let packageManager: string;
+          let install: string;
+          let run: string;
+          let add: string;
+          let addDev: string;
+          
+          if (pnpm) {
+            packageManager = 'pnpm';
+            install = 'pnpm install';
+            run = 'pnpm run';
+            add = 'pnpm add';
+            addDev = 'pnpm add -D';
+          } else if (yarn) {
+            packageManager = 'yarn';
+            install = 'yarn install';
+            run = 'yarn';
+            add = 'yarn add';
+            addDev = 'yarn add -D';
+          } else if (bun) {
+            packageManager = 'bun';
+            install = 'bun install';
+            run = 'bun run';
+            add = 'bun add';
+            addDev = 'bun add -D';
+          } else if (npm) {
+            packageManager = 'npm';
+            install = 'npm install';
+            run = 'npm run';
+            add = 'npm install';
+            addDev = 'npm install -D';
+          } else if (hasPackageJson) {
+            // Default to pnpm for JS/TS projects without lock file
+            packageManager = 'pnpm';
+            install = 'pnpm install';
+            run = 'pnpm run';
+            add = 'pnpm add';
+            addDev = 'pnpm add -D';
+            log(`      No lock file found, defaulting to pnpm`, 'dim');
+          } else {
+            return { 
+              success: true, 
+              packageManager: null,
+              message: 'No package.json found - this may not be a JS/TS project',
+            };
+          }
+          
+          log(`      Detected package manager: ${packageManager}`, 'dim');
+          return { 
+            success: true, 
+            packageManager,
+            commands: { install, run, add, addDev },
+            example: `Use "${install}" to install deps, "${run} dev" to start dev server`,
+          };
+        } catch (error) {
+          return { success: false, error: String(error) };
+        }
+      },
+    }),
+
     listFiles: tool({
       description: 'List files in the sandbox matching a pattern',
       inputSchema: z.object({
@@ -272,7 +347,7 @@ export function createCodingAgentTools() {
     }),
 
     runPlaywrightTest: tool({
-      description: 'Run a Playwright test script to interact with and verify the web app. Write the test file first, then run it. Tests should use the sandbox URL for navigation.',
+      description: 'Run a Playwright test script to interact with and verify the web app. Write the test file first, then run it. Tests should use the sandbox URL for navigation. IMPORTANT: First call detectPackageManager, then install dependencies and start the dev server BEFORE using this tool.',
       inputSchema: z.object({
         testFile: z.string().describe('Path to the Playwright test file (e.g., tests/e2e.spec.ts)'),
         headed: z.boolean().optional().describe('Run with visible browser (slower, good for debugging)'),
@@ -309,7 +384,7 @@ export function createCodingAgentTools() {
     }),
 
     takeScreenshot: tool({
-      description: 'Take a screenshot of the web app and get a visual description. The screenshot is analyzed by a vision model so you can "see" what the page looks like.',
+      description: 'Take a screenshot of the web app and get a visual description. The screenshot is analyzed by a vision model so you can "see" what the page looks like. IMPORTANT: First call detectPackageManager, then install dependencies and start the dev server BEFORE using this tool.',
       inputSchema: z.object({
         url: z.string().optional().describe('URL to screenshot (defaults to sandbox dev server)'),
         outputPath: z.string().optional().describe('Where to save the screenshot (defaults to /tmp/screenshot.png)'),
@@ -422,7 +497,7 @@ Be concise but thorough.`;
     }),
 
     browserInteract: tool({
-      description: 'Interact with the web app using Playwright. Navigate, click elements, fill forms, and get page state. Returns what the page looks like after the action.',
+      description: 'Interact with the web app using Playwright. Navigate, click elements, fill forms, and get page state. Returns what the page looks like after the action. IMPORTANT: First call detectPackageManager, then install dependencies and start the dev server BEFORE using this tool.',
       inputSchema: z.object({
         action: z.enum(['navigate', 'click', 'fill', 'getContent', 'getAccessibility', 'waitFor']).describe('Action to perform'),
         url: z.string().optional().describe('URL to navigate to (for navigate action)'),
