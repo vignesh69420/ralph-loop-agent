@@ -184,7 +184,7 @@ Sandbox dev server URL: ${sandboxDomain}`;
   const tools = createCodingAgentTools();
 
   const agent = new RalphLoopAgent({
-    model: 'anthropic/claude-opus-4.5' as any,
+    model: 'anthropic/claude-opus-4.5',
     instructions,
     tools,
 

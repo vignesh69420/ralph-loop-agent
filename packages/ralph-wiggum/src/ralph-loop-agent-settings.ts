@@ -64,8 +64,9 @@ export type RalphLoopAgentSettings<TOOLS extends ToolSet = {}> = Omit<
 
   /**
    * The language model to use.
+   * Can be a LanguageModel object or an AI Gateway string (e.g., 'anthropic/claude-opus-4.5').
    */
-  model: LanguageModel;
+  model: LanguageModel | string;
 
   /**
    * The tools that the model can call.
