@@ -46,12 +46,12 @@ Ralph wraps the AI SDK's `generateText` in an outer loop that keeps iterating un
 
 ## Features
 
-- 🔄 **Iterative completion** — Runs until `verifyCompletion` says the task is done
-- 🛠️ **Full AI SDK compatibility** — Uses AI Gateway string format, supports all AI SDK tools
-- 📊 **Flexible stop conditions** — Limit by iterations, tokens, or cost
-- 🔍 **Context management** — Built-in summarization for long-running loops
-- 📡 **Streaming support** — Stream the final iteration for responsive UIs
-- 🎯 **Feedback injection** — Failed verifications can guide the next attempt
+- **Iterative completion** — Runs until `verifyCompletion` says the task is done
+- **Full AI SDK compatibility** — Uses AI Gateway string format, supports all AI SDK tools
+- **Flexible stop conditions** — Limit by iterations, tokens, or cost
+- **Context management** — Built-in summarization for long-running loops
+- **Streaming support** — Stream the final iteration for responsive UIs
+- **Feedback injection** — Failed verifications can guide the next attempt
 
 ## Usage
 
