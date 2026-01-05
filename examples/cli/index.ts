@@ -34,7 +34,7 @@ import prompts from 'prompts';
 import { log, logSection } from './lib/logger.js';
 import { MAX_FILE_CHARS } from './lib/constants.js';
 import { initializeSandbox, closeSandbox, readFromSandbox, getSandboxDomain } from './lib/sandbox.js';
-import { getTaskPrompt } from './lib/interview.js';
+import { getTaskPrompt, runInterviewAndGetPrompt } from './lib/interview.js';
 import { createCodingAgentTools, type CodingTools } from './lib/tools/coding.js';
 import { runJudge } from './lib/judge.js';
 
@@ -103,26 +103,27 @@ async function main() {
   log(`  [!] All code runs in an isolated sandbox`, 'yellow');
   log(`      Changes will be copied back when complete`, 'dim');
 
-  // Initialize sandbox and copy files
-  logSection('Sandbox Setup');
-  await initializeSandbox(resolvedDir);
+  // Get the task prompt from local directory (before creating sandbox)
+  let taskPrompt: string;
+  let promptSource: string;
+  let sandboxCreatedForInterview = false;
 
-  const sandboxDomain = getSandboxDomain();
+  const promptResult = await getTaskPrompt(promptArg, resolvedDir);
 
-  // Load AGENTS.md if it exists
-  let agentsMd = '';
-  try {
-    const content = await readFromSandbox('AGENTS.md');
-    if (content) {
-      agentsMd = content;
-      log(`Found AGENTS.md`, 'dim');
-    }
-  } catch {
-    // No AGENTS.md, that's fine
+  if ('needsInterview' in promptResult) {
+    // Interview mode needs sandbox for codebase exploration
+    // Create sandbox first, then run interview
+    logSection('Sandbox Setup');
+    await initializeSandbox(resolvedDir);
+    sandboxCreatedForInterview = true;
+
+    const interviewResult = await runInterviewAndGetPrompt();
+    taskPrompt = interviewResult.prompt;
+    promptSource = interviewResult.source;
+  } else {
+    taskPrompt = promptResult.prompt;
+    promptSource = promptResult.source;
   }
-
-  // Get the task prompt (may run interactive interview)
-  const { prompt: taskPrompt, source: promptSource } = await getTaskPrompt(promptArg);
 
   log(`Prompt source: ${promptSource}`, 'dim');
   
@@ -144,8 +145,30 @@ async function main() {
 
   if (!confirmed) {
     log('Cancelled.', 'yellow');
-    await closeSandbox(resolvedDir);
+    if (sandboxCreatedForInterview) {
+      await closeSandbox(resolvedDir);
+    }
     process.exit(0);
+  }
+
+  // Create sandbox if not already created (for interview mode)
+  if (!sandboxCreatedForInterview) {
+    logSection('Sandbox Setup');
+    await initializeSandbox(resolvedDir);
+  }
+
+  const sandboxDomain = getSandboxDomain();
+
+  // Load AGENTS.md if it exists
+  let agentsMd = '';
+  try {
+    const content = await readFromSandbox('AGENTS.md');
+    if (content) {
+      agentsMd = content;
+      log(`Found AGENTS.md`, 'dim');
+    }
+  } catch {
+    // No AGENTS.md, that's fine
   }
 
   // Build instructions with optional AGENTS.md

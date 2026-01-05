@@ -5,7 +5,7 @@
 import { generateText, stepCountIs } from 'ai';
 import prompts from 'prompts';
 import { createInterviewerTools } from './tools/interviewer.js';
-import { readFromSandbox, writeToSandbox } from './sandbox.js';
+import { writeToSandbox } from './sandbox.js';
 import { log } from './logger.js';
 import { TASK_TYPES, VERIFICATION_METHODS } from './constants.js';
 
@@ -325,21 +325,25 @@ export async function runInterview(): Promise<{ prompt: string; saveToFile: bool
 }
 
 /**
- * Get the task prompt from various sources:
+ * Get the task prompt from various sources (reads from local directory, not sandbox):
  * 1. CLI argument (string or path to .md file)
- * 2. PROMPT.md in the sandbox
- * 3. Interactive interview
+ * 2. PROMPT.md in the local directory
+ * 3. Interactive interview (requires sandbox - returns needsInterview flag)
  */
-export async function getTaskPrompt(promptArg: string | undefined): Promise<{ prompt: string; source: string }> {
+export async function getTaskPrompt(
+  promptArg: string | undefined,
+  localDir: string
+): Promise<{ prompt: string; source: string } | { needsInterview: true }> {
+  const pathModule = await import('path');
+  const fsModule = await import('fs/promises');
+
   // If a prompt argument was provided
   if (promptArg) {
     // Check if it's a path to a .md file
     if (promptArg.endsWith('.md')) {
-      const path = await import('path');
-      const fs = await import('fs/promises');
-      const promptPath = path.resolve(promptArg.replace('~', process.env.HOME || ''));
+      const promptPath = pathModule.resolve(promptArg.replace('~', process.env.HOME || ''));
       try {
-        const content = await fs.readFile(promptPath, 'utf-8');
+        const content = await fsModule.readFile(promptPath, 'utf-8');
         return { prompt: content.trim(), source: promptPath };
       } catch {
         // If file doesn't exist, treat it as a literal string
@@ -350,17 +354,25 @@ export async function getTaskPrompt(promptArg: string | undefined): Promise<{ pr
     return { prompt: promptArg, source: 'CLI argument' };
   }
 
-  // Check for PROMPT.md in sandbox
+  // Check for PROMPT.md in local directory (not sandbox)
   try {
-    const content = await readFromSandbox('PROMPT.md');
+    const promptPath = pathModule.join(localDir, 'PROMPT.md');
+    const content = await fsModule.readFile(promptPath, 'utf-8');
     if (content) {
-      return { prompt: content.trim(), source: 'PROMPT.md (from sandbox)' };
+      return { prompt: content.trim(), source: 'PROMPT.md' };
     }
   } catch {
     // No PROMPT.md found
   }
 
-  // Run interactive interview
+  // Need interactive interview (requires sandbox)
+  return { needsInterview: true };
+}
+
+/**
+ * Run the interview and get the prompt. Call this after sandbox is initialized.
+ */
+export async function runInterviewAndGetPrompt(): Promise<{ prompt: string; source: string }> {
   log('No PROMPT.md found. Starting interactive setup...', 'yellow');
   
   const { prompt, saveToFile } = await runInterview();
