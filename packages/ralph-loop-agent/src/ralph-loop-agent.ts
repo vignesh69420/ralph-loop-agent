@@ -168,6 +168,22 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
   }
 
   /**
+   * Check if the current model is an Anthropic model (for prompt caching).
+   */
+  private isAnthropicModel(): boolean {
+    const model = this.settings.model;
+    if (typeof model === 'string') {
+      return model.includes('anthropic') || model.includes('claude');
+    }
+    return (
+      model.provider === 'anthropic' ||
+      model.provider?.includes('anthropic') ||
+      model.modelId?.includes('anthropic') ||
+      model.modelId?.includes('claude')
+    );
+  }
+
+  /**
    * Get the stop conditions as an array.
    */
   private getStopConditions(): Array<RalphStopCondition<TOOLS>> {
@@ -286,11 +302,9 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
               lastSystem.content += contextInjection;
             }
           } else {
-            // Enable Anthropic prompt caching on injected context
             messagesToSend.unshift({
               role: 'system',
               content: contextInjection,
-              providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
             });
           }
         }
@@ -332,6 +346,43 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
         }
       }
 
+      // Create prepareStep that adds cache control for Anthropic models
+      const isAnthropic = this.isAnthropicModel();
+      const userPrepareStep = this.settings.prepareStep;
+      
+      // Helper to add cache control to last message
+      const addCacheControlToMessages = (messages: ModelMessage[]): ModelMessage[] => {
+        if (messages.length === 0) return messages;
+        
+        return messages.map((message: ModelMessage, index: number) => {
+          if (index === messages.length - 1) {
+            return {
+              ...message,
+              providerOptions: {
+                ...message.providerOptions,
+                anthropic: {
+                  ...(message.providerOptions?.anthropic as Record<string, unknown> ?? {}),
+                  cacheControl: { type: 'ephemeral' },
+                },
+              },
+            };
+          }
+          return message;
+        });
+      };
+      
+      const prepareStepWithCaching: typeof userPrepareStep = isAnthropic
+        ? async (stepInfo) => {
+            // First apply user's prepareStep if provided
+            const userResult = userPrepareStep ? await userPrepareStep(stepInfo) : {};
+            const messages = userResult?.messages ?? stepInfo.messages;
+            
+            // Add cache control to the last message for Anthropic
+            const cacheControlMessages = addCacheControlToMessages(messages);
+            return { ...userResult, messages: cacheControlMessages };
+          }
+        : userPrepareStep;
+
       // Run the inner tool loop
       const result = (await generateText({
         model: this.settings.model,
@@ -349,7 +400,7 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
         seed: this.settings.seed,
         experimental_telemetry: this.settings.experimental_telemetry,
         activeTools: this.settings.activeTools,
-        prepareStep: this.settings.prepareStep,
+        prepareStep: prepareStepWithCaching,
         experimental_repairToolCall: this.settings.experimental_repairToolCall,
         providerOptions: this.settings.providerOptions,
         experimental_context: this.settings.experimental_context,
@@ -611,7 +662,6 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
 
   /**
    * Build system messages from instructions.
-   * Enables Anthropic prompt caching for cost reduction.
    */
   private buildSystemMessages(): Array<ModelMessage> {
     const { instructions } = this.settings;
@@ -620,21 +670,14 @@ export class RalphLoopAgent<TOOLS extends ToolSet = {}> {
       return [];
     }
 
-    // Enable Anthropic prompt caching on system messages
-    const cacheControl = { anthropic: { cacheControl: { type: 'ephemeral' } } };
-
     if (typeof instructions === 'string') {
-      return [{ role: 'system', content: instructions, providerOptions: cacheControl }];
+      return [{ role: 'system', content: instructions }];
     }
 
     if (Array.isArray(instructions)) {
-      // Add cacheControl to each message that doesn't already have it
-      return instructions.map(msg => ({
-        ...msg,
-        providerOptions: msg.providerOptions ?? cacheControl,
-      }));
+      return instructions;
     }
 
-    return [{ ...instructions, providerOptions: instructions.providerOptions ?? cacheControl }];
+    return [instructions];
   }
 }
